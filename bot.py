@@ -49,6 +49,24 @@ else:
 
 TEMPLATE_DIR = resource_path("templates")
 
+
+# 로컬 오버라이드(_local) — GUI 셋업으로 생성. 있으면 git 번들보다 우선.
+def _local_path(p):
+    base, ext = os.path.splitext(p)
+    return f"{base}_local{ext}"
+
+def popup_img_path():
+    local = _local_path(POPUP_IMG)
+    return local if os.path.exists(local) else POPUP_IMG
+
+def accept_img_path():
+    local = _local_path(ACCEPT_IMG)
+    return local if os.path.exists(local) else ACCEPT_IMG
+
+def config_file_path():
+    local = _local_path(CONFIG_FILE)
+    return local if os.path.exists(local) else CONFIG_FILE
+
 # 수락 버튼 캡처 영역 (논리좌표 기준, 마우스 위치 중심)
 ACCEPT_BTN_W = 130
 ACCEPT_BTN_H = 44
@@ -99,10 +117,11 @@ def click_at(x, y):
 
 def find_popup(screen):
     """'새 주문이 들어왔어요' 템플릿을 화면에서 찾아 중심좌표 반환"""
-    if not os.path.exists(POPUP_IMG):
+    img_path = popup_img_path()
+    if not os.path.exists(img_path):
         return None
 
-    tmpl = cv2.imread(POPUP_IMG)
+    tmpl = cv2.imread(img_path)
     if tmpl is None:
         return None
 
@@ -128,10 +147,11 @@ def find_accept_button(screen):
     팝업 내부 UI가 변해도(경고 메시지 추가 등) 수락 버튼만 추적.
     템플릿이 없거나 매칭 실패 시 None.
     """
-    if not os.path.exists(ACCEPT_IMG):
+    img_path = accept_img_path()
+    if not os.path.exists(img_path):
         return None
 
-    tmpl = cv2.imread(ACCEPT_IMG)
+    tmpl = cv2.imread(img_path)
     if tmpl is None:
         return None
 
@@ -245,14 +265,66 @@ def setup():
 # ─── 설정 로드 ───
 
 def load_offsets():
-    if not os.path.exists(CONFIG_FILE):
+    cfg = config_file_path()
+    if not os.path.exists(cfg):
         log("offsets.json 없음 → python3 bot.py setup 먼저 실행")
         sys.exit(1)
-    if not os.path.exists(POPUP_IMG):
+    if not os.path.exists(popup_img_path()):
         log("popup.png 없음 → python3 bot.py setup 먼저 실행")
         sys.exit(1)
-    with open(CONFIG_FILE) as f:
+    with open(cfg) as f:
         return json.load(f)
+
+
+# ─── GUI 셋업용 헬퍼 (친구가 직접 재캘리브레이션할 때) ───
+# CLI setup()은 git 커밋용 기본값 생성, 이 함수들은 _local 파일로 저장.
+
+def capture_popup_at(mouse_x, mouse_y):
+    """주어진 마우스 위치 기준으로 팝업 제목 템플릿을 _local 경로에 저장."""
+    ss = grab()
+    pw, ph = int(160 * SCALE), int(28 * SCALE)
+    px, py = int(mouse_x * SCALE), int(mouse_y * SCALE)
+    h_img, w_img = ss.shape[:2]
+    x1 = max(0, px - pw // 2)
+    y1 = max(0, py - ph // 2)
+    x2 = min(w_img, px + pw // 2)
+    y2 = min(h_img, py + ph // 2)
+    crop = ss[y1:y2, x1:x2]
+    out = _local_path(POPUP_IMG)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    cv2.imwrite(out, crop)
+    return out
+
+
+def capture_accept_at(mouse_x, mouse_y):
+    ss = grab()
+    aw, ah = int(ACCEPT_BTN_W * SCALE), int(ACCEPT_BTN_H * SCALE)
+    ax, ay = int(mouse_x * SCALE), int(mouse_y * SCALE)
+    h_img, w_img = ss.shape[:2]
+    x1 = max(0, ax - aw // 2)
+    y1 = max(0, ay - ah // 2)
+    x2 = min(w_img, ax + aw // 2)
+    y2 = min(h_img, ay + ah // 2)
+    crop = ss[y1:y2, x1:x2]
+    out = _local_path(ACCEPT_IMG)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    cv2.imwrite(out, crop)
+    return out
+
+
+def save_offsets_local(popup_xy, plus5_xy, accept_xy):
+    """팝업 제목 기준 상대좌표를 _local json에 저장."""
+    offsets = {
+        "plus5_dx": plus5_xy[0] - popup_xy[0],
+        "plus5_dy": plus5_xy[1] - popup_xy[1],
+        "accept_dx": accept_xy[0] - popup_xy[0],
+        "accept_dy": accept_xy[1] - popup_xy[1],
+    }
+    out = _local_path(CONFIG_FILE)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w") as f:
+        json.dump(offsets, f, indent=2)
+    return out, offsets
 
 
 # ─── 자동 수락 ───

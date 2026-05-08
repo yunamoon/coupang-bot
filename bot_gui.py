@@ -66,7 +66,7 @@ ERR_TEXT    = "#D86464"
 
 def bot_loop(running_flag, status_cb, count_cb):
     try:
-        with open(bot.CONFIG_FILE) as f:
+        with open(bot.config_file_path()) as f:
             offsets = json.load(f)
     except Exception:
         status_cb(("error", "offsets.json을 찾을 수 없어요"))
@@ -146,7 +146,7 @@ def _hex(h):
 
 
 def make_mascot(path, size=120, ring=CORAL, ring_w=4):
-    """탄이 사진을 원형으로 자르고 코랄 링을 두름."""
+    """탄이 사진을 원형으로 자르고 상태 컬러 링을 두름."""
     pad = 6
     cs = size + 2 * pad
     canvas = Image.new("RGBA", (cs, cs), (0, 0, 0, 0))
@@ -273,13 +273,159 @@ class GradientButton(tk.Canvas):
         self._render()
 
 
+# ─── 셋업 마법사 ───
+
+import pyautogui
+
+
+class SetupWizard(tk.Toplevel):
+    """3단계 마법사 — POS UI 변경 시 친구가 직접 오프셋 재캘리브레이션.
+
+    버튼 누르면 2초 카운트다운 후 마우스 현재 위치 캡처. 카운트다운 동안
+    사용자가 손쉽게 마우스를 목표 위치로 옮길 수 있게.
+    """
+
+    STEPS = [
+        ("팝업의 \"새 주문이 들어왔어요\"\n텍스트 위에 마우스를 올려두세요", "popup"),
+        ("\"+5\" 버튼 위에 마우스를 올려두세요", "plus5"),
+        ("\"수락\" 버튼 위에 마우스를 올려두세요\n(+5를 최대로 누른 상태에서 측정 추천)", "accept"),
+    ]
+    COUNTDOWN_SEC = 2
+    TOTAL = 3
+
+    def __init__(self, master, on_done):
+        super().__init__(master)
+        self.title("POS 셋업")
+        self.geometry("420x360+30+30")
+        self.attributes("-topmost", True)
+        self.configure(bg=CREAM)
+        self.resizable(False, False)
+
+        self.on_done = on_done
+        self.step_idx = 0
+        self.captures = {}
+        self._busy = False
+
+        self._build_ui()
+
+    def _build_ui(self):
+        # 헤더
+        tk.Label(
+            self, text="POS 셋업",
+            font=(KFONT, FONT_LG, "bold"),
+            fg=TEXT_MAIN, bg=CREAM,
+        ).pack(pady=(24, 6))
+
+        # 단계 표시 — 알약 형태 칩
+        self.step_lbl = tk.Label(
+            self, text="",
+            font=(KFONT, FONT_XS, "bold"),
+            fg=CORAL_DARK, bg=CREAM_DARK,
+            padx=14, pady=4,
+        )
+        self.step_lbl.pack()
+
+        # 안내 텍스트
+        self.instr_lbl = tk.Label(
+            self, text="",
+            font=(KFONT, FONT_SM),
+            fg=TEXT_MAIN, bg=CREAM,
+            justify="center",
+            wraplength=360,
+        )
+        self.instr_lbl.pack(pady=(18, 12))
+
+        # 캡처 버튼 — 메인 GUI와 동일 스타일(GradientButton)
+        self.capture_btn = GradientButton(
+            self, width=240, height=46,
+            text="캡처 시작",
+            c1=CORAL_LIGHT, c2=CORAL,
+            command=self._trigger,
+            font=(KFONT, FONT_MD, "bold"),
+        )
+        self.capture_btn.pack()
+
+        # 취소 — 보조 액션이라 작은 링크로
+        cancel = tk.Label(
+            self, text="취소",
+            font=(KFONT, FONT_XS, "underline"),
+            fg=TEXT_HINT, bg=CREAM, cursor="hand2",
+        )
+        cancel.bind("<Button-1>", lambda e: self.destroy())
+        cancel.pack(pady=(2, 0))
+
+        self._render_step()
+
+    def _render_step(self):
+        instr, _ = self.STEPS[self.step_idx]
+        self.step_lbl.config(text=f"  단계 {self.step_idx + 1} / {self.TOTAL}  ")
+        self.instr_lbl.config(text=instr, fg=TEXT_MAIN)
+        self.capture_btn.set_state(CORAL_LIGHT, CORAL, text="캡처 시작")
+
+    def _trigger(self):
+        if self._busy:
+            return
+        self._busy = True
+        self._countdown(self.COUNTDOWN_SEC)
+
+    def _countdown(self, n):
+        if n <= 0:
+            self._do_capture()
+            return
+        self.instr_lbl.config(
+            text=f"마우스를 목표 위치에 올려두세요\n{n}초 후 캡처합니다",
+            fg=CORAL_DARK,
+        )
+        self.capture_btn.set_state(MINT_LIGHT, MINT_DARK, text=f"{n}")
+        self.after(1000, lambda: self._countdown(n - 1))
+
+    def _do_capture(self):
+        try:
+            x, y = pyautogui.position()
+            _, key = self.STEPS[self.step_idx]
+            self.captures[key] = (x, y)
+
+            if key == "popup":
+                bot.capture_popup_at(x, y)
+            elif key == "accept":
+                bot.capture_accept_at(x, y)
+        except Exception as e:
+            self._show_error(f"캡처 실패: {e}")
+            return
+
+        self.step_idx += 1
+        self._busy = False
+        if self.step_idx >= len(self.STEPS):
+            self._finish()
+        else:
+            self._render_step()
+
+    def _finish(self):
+        try:
+            bot.save_offsets_local(
+                self.captures["popup"],
+                self.captures["plus5"],
+                self.captures["accept"],
+            )
+        except Exception as e:
+            self._show_error(f"저장 실패: {e}")
+            return
+        self.on_done()
+        self.destroy()
+
+    def _show_error(self, msg):
+        self.instr_lbl.config(text=msg, fg=ERR_TEXT)
+        self.capture_btn.set_state(CORAL_LIGHT, CORAL, text="다시 시도")
+        self._busy = False
+
+
 # ─── App ───
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("쿠팡이츠 · 탄이 봇")
-        self.geometry("440x710")
+        self.geometry("440x720")
         self.resizable(False, False)
         self.configure(bg=CREAM)
         self.attributes("-topmost", True)
@@ -300,14 +446,22 @@ class App(tk.Tk):
         self._build_stat_card()
         self._build_button()
 
+        self.setup_link = tk.Label(
+            self, text="POS 화면이 바뀌었나요? 셋업 다시하기",
+            font=(KFONT, FONT_XS, "underline"),
+            fg=TEXT_HINT, bg=CREAM, cursor="hand2",
+        )
+        self.setup_link.bind("<Button-1>", lambda e: self._open_setup())
+        self.setup_link.pack(pady=(2, 0))
+
         tk.Label(
             self, text="종료하려면 창을 닫으세요",
             font=(KFONT, FONT_SM), fg=TEXT_HINT, bg=CREAM,
-        ).pack(pady=(8, 0))
+        ).pack(pady=(6, 0))
 
     def _build_mascot(self):
-        size = 120
-        cs = size + 12  # ring 여유만 (glow 없음)
+        self._mascot_size = 120
+        cs = self._mascot_size + 12  # ring 여유만 (glow 없음)
         self.mascot_canvas = tk.Canvas(
             self, width=cs, height=cs,
             bg=CREAM, highlightthickness=0, bd=0,
@@ -315,7 +469,9 @@ class App(tk.Tk):
         self.mascot_canvas.pack(pady=(14, 2))
 
         try:
-            self._refs["mascot"] = ImageTk.PhotoImage(make_mascot(MASCOT_IMG, size=size))
+            self._refs["mascot"] = ImageTk.PhotoImage(
+                make_mascot(MASCOT_IMG, size=self._mascot_size)
+            )
             self._mascot_id = self.mascot_canvas.create_image(
                 cs // 2, cs // 2, image=self._refs["mascot"],
             )
@@ -335,6 +491,17 @@ class App(tk.Tk):
             font=(KFONT, FONT_SM),
             fg=TEXT_SUB, bg=CREAM,
         ).pack(pady=(2, 8))
+
+    def _set_mascot_ring(self, color):
+        if not hasattr(self, "_mascot_id"):
+            return
+        try:
+            self._refs["mascot"] = ImageTk.PhotoImage(
+                make_mascot(MASCOT_IMG, size=self._mascot_size, ring=color)
+            )
+            self.mascot_canvas.itemconfig(self._mascot_id, image=self._refs["mascot"])
+        except Exception:
+            pass
 
     def _build_stat_card(self):
         card_w, card_h = 350, 250
@@ -456,6 +623,7 @@ class App(tk.Tk):
     def _start(self):
         self._running = True
         self.btn.set_state(MINT_LIGHT, MINT_DARK, text="자동 수락 중지")
+        self._set_mascot_ring(MINT_DARK)
         self._set_badge("running", "실행 중")
         self._thread = threading.Thread(
             target=bot_loop,
@@ -471,6 +639,7 @@ class App(tk.Tk):
     def _stop(self):
         self._running = False
         self.btn.set_state(CORAL_LIGHT, CORAL, text="자동 수락 시작 🚀")
+        self._set_mascot_ring(CORAL)
         self._set_badge("waiting", "대기 중")
         self.status_var.set("일시 정지됐어요")
 
@@ -502,6 +671,16 @@ class App(tk.Tk):
     def _set_count(self, n):
         self._count = n
         self.after(0, lambda: self.count_var.set(str(n)))
+
+    # ─── 셋업 ───
+    def _open_setup(self):
+        if self._running:
+            self.status_var.set("셋업하려면 먼저 자동 수락을 멈춰주세요")
+            return
+        SetupWizard(self, on_done=self._on_setup_done)
+
+    def _on_setup_done(self):
+        self.status_var.set("셋업 완료! 자동 수락을 다시 시작해주세요")
 
     def destroy(self):
         self._running = False

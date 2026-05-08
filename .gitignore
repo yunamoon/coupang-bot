@@ -6,3 +6,7 @@ __pycache__/
 .idea/
 *.log
 alert_config.json
+
+# 친구 PC에서 GUI 셋업으로 만든 로컬 오버라이드 (POS별)
+templates/*_local.png
+templates/*_local.json
