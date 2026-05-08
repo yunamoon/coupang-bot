@@ -6,6 +6,14 @@ echo   쿠팡 이츠 자동수락- 탄이봇 셋업
 echo ===========================================
 echo.
 
+REM 이미 코드와 같은 폴더에서 실행된 경우 (예: 사용자가 git clone 받은 폴더에서 직접 실행).
+REM 별도 clone 없이 이 폴더 그대로 셋업.
+if exist "%~dp0bot.py" (
+    echo [INFO] 같은 폴더에서 코드 발견. clone 단계 건너뜀.
+    cd /d "%~dp0"
+    goto deps
+)
+
 REM --- Step 1: Git ---
 where git >nul 2>&1
 if errorlevel 1 (
@@ -61,16 +69,23 @@ if not exist "coupang-bot\bot.py" (
 ) else (
     echo [3/5] 코드 폴더 이미 있음 - 최신화 시도
     pushd coupang-bot
-    git pull
+    git fetch origin
+    git reset --hard origin/main
     popd
 )
 echo [3/5] 코드: OK
 
 cd coupang-bot
 
+:deps
 REM --- Step 4: 패키지 ---
-echo [4/5] 파이썬 패키지 설치 중...
-py -m pip install -r requirements.txt -q
+echo [4/5] 파이썬 패키지 설치 중... ^(처음엔 1~2분 걸려요^)
+py -m pip install -r requirements.txt
+if errorlevel 1 (
+    echo [실패] 파이썬 패키지 설치 실패. 인터넷 연결 확인해주세요.
+    pause
+    exit /b 1
+)
 echo [4/5] 패키지: OK
 
 REM --- Step 5: 바로가기 ---

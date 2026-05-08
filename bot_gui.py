@@ -8,6 +8,8 @@ import json
 import time
 import os
 import platform
+import socket
+import sys
 
 import numpy as np
 from PIL import Image, ImageTk, ImageDraw, ImageFilter
@@ -64,15 +66,16 @@ ERR_TEXT    = "#D86464"
 
 # ─── 봇 로직 ───
 
-def bot_loop(running_flag, status_cb, count_cb):
+def bot_loop(running_flag, status_cb, count_cb, on_exit):
     try:
         with open(bot.config_file_path()) as f:
             offsets = json.load(f)
     except Exception:
         status_cb(("error", "offsets.json을 찾을 수 없어요"))
+        on_exit()
         return
 
-    count = 0
+    in_error = False
     status_cb(("waiting", "탄이가 주문 찾는 중!"))
 
     while running_flag():
@@ -120,8 +123,7 @@ def bot_loop(running_flag, status_cb, count_cb):
                         break
 
                 if disappeared:
-                    count += 1
-                    count_cb(count)
+                    count_cb()
                     status_cb(("running", "수락 완료! 잘했어요 탄이!"))
                     time.sleep(POST_ACCEPT)
                     status_cb(("waiting", "탄이가 주문 찾는 중!"))
@@ -130,12 +132,23 @@ def bot_loop(running_flag, status_cb, count_cb):
                     # (진짜 클릭 실패면 같은 팝업 재시도, 너무 빠른 연속 주문이면 새 팝업 정상 처리)
                     status_cb(("running", "다음 주문 확인 중..."))
 
+            # 정상 iteration이 끝났다면 직전 에러 상태에서 자동 복구.
+            # (이걸 안 하면 일시 에러 한 번에 GUI가 영영 빨간 "오류" 배지로 굳어
+            #  친구가 멀쩡한 봇을 끄는 사고로 이어짐)
+            if in_error:
+                status_cb(("waiting", "탄이가 주문 찾는 중!"))
+                in_error = False
+
         except Exception as e:
             err_msg = f"오류: {e}"
             status_cb(("error", err_msg))
             _tracker.record(err_msg)
+            in_error = True
 
         time.sleep(SCAN_INTERVAL)
+
+    # while 루프 정상 종료 (사용자 Stop) — 멱등하게 GUI도 stop 상태로 동기화.
+    on_exit()
 
 
 # ─── PIL 헬퍼 ───
@@ -380,6 +393,11 @@ class SetupWizard(tk.Toplevel):
         self.after(1000, lambda: self._countdown(n - 1))
 
     def _do_capture(self):
+        # 마우스가 마법사 창 위에 있으면 마법사 UI 일부가 템플릿으로 잘려 들어감.
+        # 캡처 직전에 잠깐 숨기고 화면이 갱신될 시간을 준 뒤 screenshot.
+        self.withdraw()
+        self.update_idletasks()
+        time.sleep(0.15)
         try:
             x, y = pyautogui.position()
             _, key = self.STEPS[self.step_idx]
@@ -390,8 +408,10 @@ class SetupWizard(tk.Toplevel):
             elif key == "accept":
                 bot.capture_accept_at(x, y)
         except Exception as e:
+            self.deiconify()
             self._show_error(f"캡처 실패: {e}")
             return
+        self.deiconify()
 
         self.step_idx += 1
         self._busy = False
@@ -605,7 +625,7 @@ class App(tk.Tk):
             for i, d in enumerate(self._dot_items):
                 self.dots_canvas.itemconfig(
                     d, state="normal",
-                    fill=CORAL if i == self._dot_idx else TEXT_HINT,
+                    fill=MINT_DARK if i == self._dot_idx else TEXT_HINT,
                 )
             self._dot_idx = (self._dot_idx + 1) % 3
         else:
@@ -621,6 +641,12 @@ class App(tk.Tk):
             self._stop()
 
     def _start(self):
+        # 이전 thread가 아직 살아있으면 (Stop 직후 즉시 Start 누른 경우)
+        # 끝나길 기다린 뒤 시작 — 두 봇이 동시에 같은 좌표를 클릭하는 사고 방지.
+        if self._thread and self._thread.is_alive():
+            self._running = False
+            self._thread.join(timeout=3.0)
+
         self._running = True
         self.btn.set_state(MINT_LIGHT, MINT_DARK, text="자동 수락 중지")
         self._set_mascot_ring(MINT_DARK)
@@ -630,7 +656,8 @@ class App(tk.Tk):
             args=(
                 lambda: self._running,
                 self._set_status,
-                self._set_count,
+                self._increment_count,
+                self._on_bot_exit,
             ),
             daemon=True,
         )
@@ -657,9 +684,18 @@ class App(tk.Tk):
 
     def _set_status(self, payload):
         state, msg = payload
-        self.after(0, lambda: self._apply_status(state, msg))
+        try:
+            self.after(0, lambda: self._apply_status(state, msg))
+        except (RuntimeError, tk.TclError):
+            # destroy 직후 worker가 큐에 dispatch한 stale 호출은 무시.
+            pass
 
     def _apply_status(self, state, msg):
+        # Stop 직후 봇 thread가 마지막 클릭 처리를 끝내며 큐에 dispatch한 status가
+        # _stop()의 "대기 중/일시 정지됐어요"를 덮어쓰는 race를 막는다.
+        # _running=False면 stale dispatch로 보고 무시.
+        if not self._running:
+            return
         self.status_var.set(msg)
         if state == "running":
             self._set_badge("running", "실행 중")
@@ -668,9 +704,30 @@ class App(tk.Tk):
         elif state == "error":
             self._set_badge("error", "오류")
 
-    def _set_count(self, n):
-        self._count = n
-        self.after(0, lambda: self.count_var.set(str(n)))
+    def _increment_count(self):
+        # 카운트는 App이 소유 — 봇 thread를 껐다 켜도 누적값이 유지됨.
+        # (worker가 자체 카운터를 갖고 있으면 thread 재시작마다 0으로 리셋됨)
+        self._count += 1
+        try:
+            self.after(0, lambda: self.count_var.set(str(self._count)))
+        except (RuntimeError, tk.TclError):
+            pass
+
+    def _on_bot_exit(self):
+        """봇 thread가 어떤 이유로든 종료될 때 호출.
+        offsets.json 못 읽는 등 startup 실패 시 GUI가 '실행 중'으로 굳는 사고 방지."""
+        try:
+            self.after(0, self._reset_to_stopped)
+        except (RuntimeError, tk.TclError):
+            pass
+
+    def _reset_to_stopped(self):
+        if not self._running:
+            return  # 사용자가 이미 _stop()을 호출해 동기화됨 — 멱등.
+        self._running = False
+        self.btn.set_state(CORAL_LIGHT, CORAL, text="자동 수락 시작 🚀")
+        self._set_mascot_ring(CORAL)
+        # status/badge는 그대로 — 에러 메시지가 표시 중이면 친구가 원인 파악 가능.
 
     # ─── 셋업 ───
     def _open_setup(self):
@@ -684,8 +741,42 @@ class App(tk.Tk):
 
     def destroy(self):
         self._running = False
+        # thread가 마무리되길 기다린 뒤 destroy — 진행 중인 after() 호출이
+        # 이미 사라진 위젯에 닿아 TclError 내는 race를 줄임.
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
         super().destroy()
 
 
+# ─── Single-instance guard ───
+# 친구가 바로가기를 두 번 더블클릭하면 봇이 2개 동시에 실행되며 같은 좌표를
+# 동시 클릭해 +5/수락이 중복 호출됨. localhost 포트 바인드로 막는다.
+# 첫 인스턴스 종료 시 OS가 소켓을 자동 회수해 stale lock 걱정 없음.
+_SINGLETON_PORT = 54218
+
+
+def _acquire_singleton():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", _SINGLETON_PORT))
+        s.listen(1)
+        return s
+    except OSError:
+        return None
+
+
 if __name__ == "__main__":
+    _singleton = _acquire_singleton()
+    if _singleton is None:
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.attributes("-topmost", True)
+        root.withdraw()
+        messagebox.showinfo(
+            "탄이 봇",
+            "탄이 봇이 이미 실행 중이에요!\n작업 표시줄에서 창을 찾아보세요.",
+            parent=root,
+        )
+        root.destroy()
+        sys.exit(0)
     App().mainloop()
