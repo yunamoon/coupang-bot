@@ -1,0 +1,7 @@
+{
+  "github_token": "github_pat_여기에_토큰_붙여넣기",
+  "repo": "yunamoon/coupang-bot",
+  "threshold": 3,
+  "window_sec": 300,
+  "cooldown_sec": 1800
+}

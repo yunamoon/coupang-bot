@@ -14,6 +14,9 @@ from PIL import Image, ImageTk, ImageDraw, ImageFilter
 
 # bot.py의 검증된 헬퍼를 그대로 사용 (Retina 스케일링, osascript 클릭 등)
 import bot
+import alert
+
+_tracker = alert.load_tracker()
 
 
 def resource_path(relative):
@@ -128,7 +131,9 @@ def bot_loop(running_flag, status_cb, count_cb):
                     status_cb(("running", "다음 주문 확인 중..."))
 
         except Exception as e:
-            status_cb(("error", f"오류: {e}"))
+            err_msg = f"오류: {e}"
+            status_cb(("error", err_msg))
+            _tracker.record(err_msg)
 
         time.sleep(SCAN_INTERVAL)
 
