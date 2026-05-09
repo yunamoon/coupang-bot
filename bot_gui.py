@@ -516,7 +516,9 @@ class SetupWizard(tk.Toplevel):
         btn_frame = tk.Frame(dlg, bg=CREAM)
         btn_frame.pack()
 
-        result = {"redo": None}
+        # 기본값을 redo로 — X(창 닫기)나 명시적 미선택 시에도 안전한 쪽으로.
+        # 검증 실패한 셋업이 침묵 저장되는 것보다 다시 묻는 게 사고 적음.
+        result = {"redo": True}
 
         def pick_redo():
             result["redo"] = True
@@ -525,6 +527,9 @@ class SetupWizard(tk.Toplevel):
         def pick_save():
             result["redo"] = False
             dlg.destroy()
+
+        # X 버튼도 redo로 (위 result 기본값 유지하며 창만 닫음)
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
 
         GradientButton(
             btn_frame, width=130, height=42,
@@ -605,6 +610,7 @@ class App(tk.Tk):
         self._count = 0
         self._refs = {}                     # PhotoImage 참조 유지
         self._last_beat = time.time()       # watchdog 안전 초기화
+        self._watchdog_after_id = None      # after() 핸들 (중복 예약 방지용)
 
         self._dot_idx = 0
 
@@ -850,23 +856,40 @@ class App(tk.Tk):
     def _schedule_watchdog(self):
         if not self._running:
             return
-        self.after(WATCHDOG_CHECK_INTERVAL_MS, self._watchdog_check)
+        # 기존 예약된 콜백이 있으면 취소해 중복 예약 방지.
+        # (Stop 후 즉시 Start 등으로 watchdog 루프가 중첩되는 사고 막음.)
+        self._cancel_watchdog()
+        self._watchdog_after_id = self.after(
+            WATCHDOG_CHECK_INTERVAL_MS, self._watchdog_check
+        )
+
+    def _cancel_watchdog(self):
+        if self._watchdog_after_id is not None:
+            try:
+                self.after_cancel(self._watchdog_after_id)
+            except Exception:
+                pass
+            self._watchdog_after_id = None
 
     def _watchdog_check(self):
         if not self._running:
             return
         elapsed = time.time() - self._last_beat
         if elapsed > WATCHDOG_STALE_SEC:
-            msg = (
+            # GUI에는 elapsed 포함 자세한 메시지.
+            gui_msg = (
                 f"봇 루프 응답 없음 — {int(elapsed)}초간 멈춤 감지. "
                 f"창을 끄고 다시 시작해주세요."
             )
-            self._apply_status("error", msg)
-            _tracker.record(msg)
+            self._apply_status("error", gui_msg)
+            # ErrorTracker는 메시지 문자열을 dedup 키로 쓰므로 elapsed가 변하면
+            # 같은 장애가 반복돼도 threshold에 영원히 못 도달함. stable 키로 record.
+            _tracker.record("봇 루프 응답 없음 (watchdog stale)")
         self._schedule_watchdog()
 
     def _stop(self):
         self._running = False
+        self._cancel_watchdog()
         self.btn.set_state(CORAL_LIGHT, CORAL, text="자동 수락 시작 🚀")
         self._set_mascot_ring(CORAL)
         self._set_badge("waiting", "대기 중")
