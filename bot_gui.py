@@ -478,16 +478,75 @@ class SetupWizard(tk.Toplevel):
         self._save_and_done()
 
     def _handle_warnings(self, warnings):
-        from tkinter import messagebox
-        msg = (
-            "셋업 검증에서 다음 문제가 발견됐어요:\n\n"
-            + "\n\n".join(f"• {w}" for w in warnings)
-            + "\n\n"
-            "다시 셋업하시겠어요?\n"
-            "(\"아니오\" 누르면 그대로 저장 — 봇이 잘못 동작할 수 있음)"
+        # macOS에서 wizard의 -topmost가 messagebox를 가리는 케이스가 있어,
+        # 자체 Toplevel로 직접 다이얼로그 구성. wizard와 동일한 탑모스트를 쓰면서
+        # transient + grab_set으로 모달 보장.
+        dlg = tk.Toplevel(self)
+        dlg.title("셋업 확인 필요")
+        dlg.configure(bg=CREAM)
+        dlg.resizable(False, False)
+        dlg.attributes("-topmost", True)
+        dlg.transient(self)
+
+        # wizard 위에 위치
+        wx = self.winfo_x()
+        wy = self.winfo_y()
+        dlg.geometry(f"380x320+{wx + 20}+{wy + 20}")
+
+        tk.Label(
+            dlg, text="확인이 필요해요",
+            font=(KFONT, FONT_LG, "bold"),
+            fg=ERR_TEXT, bg=CREAM,
+        ).pack(pady=(20, 8))
+
+        msg_text = "\n\n".join(f"• {w}" for w in warnings)
+        tk.Label(
+            dlg, text=msg_text,
+            font=(KFONT, FONT_SM),
+            fg=TEXT_MAIN, bg=CREAM,
+            justify="left", wraplength=340,
+        ).pack(padx=18, pady=(0, 10))
+
+        tk.Label(
+            dlg, text="다시 셋업하시겠어요?",
+            font=(KFONT, FONT_SM, "bold"),
+            fg=TEXT_MAIN, bg=CREAM,
+        ).pack(pady=(4, 12))
+
+        btn_frame = tk.Frame(dlg, bg=CREAM)
+        btn_frame.pack()
+
+        result = {"redo": None}
+
+        def pick_redo():
+            result["redo"] = True
+            dlg.destroy()
+
+        def pick_save():
+            result["redo"] = False
+            dlg.destroy()
+
+        GradientButton(
+            btn_frame, width=130, height=42,
+            text="다시 셋업",
+            c1=CORAL_LIGHT, c2=CORAL,
+            command=pick_redo,
+            font=(KFONT, FONT_SM, "bold"),
+        ).pack(side="left", padx=4)
+
+        save_lbl = tk.Label(
+            btn_frame, text="그대로 저장",
+            font=(KFONT, FONT_XS, "underline"),
+            fg=TEXT_HINT, bg=CREAM, cursor="hand2",
+            padx=12, pady=14,
         )
-        do_redo = messagebox.askyesno("셋업 확인 필요", msg, parent=self)
-        if do_redo:
+        save_lbl.bind("<Button-1>", lambda e: pick_save())
+        save_lbl.pack(side="left", padx=8)
+
+        dlg.grab_set()
+        self.wait_window(dlg)
+
+        if result["redo"]:
             self._restart_wizard()
         else:
             self._save_and_done()
