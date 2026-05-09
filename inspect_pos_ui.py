@@ -8,6 +8,7 @@ are visible through UI Automation.
 Usage:
   py inspect_pos_ui.py
   py inspect_pos_ui.py --keyword "준비 지연" --keyword "시간 추가"
+  py inspect_pos_ui.py --window-keyword "coupang POS" --keyword "준비 지연"
   py inspect_pos_ui.py --dump-depth 4 --all-windows
 
 This script is intentionally standalone and does not affect the running bot.
@@ -34,6 +35,12 @@ DEFAULT_KEYWORDS = [
     "시간",
     "시간 추가",
     "추가",
+]
+
+DEFAULT_WINDOW_KEYWORDS = [
+    "coupang POS",
+    "Coupang",
+    "POS",
 ]
 
 
@@ -210,13 +217,13 @@ def _dump_tree(wrapper, keywords, max_depth, current_depth=0, matches=None):
     return matches
 
 
-def _window_candidates(desktop, keywords, all_windows):
+def _window_candidates(desktop, window_keywords, all_windows):
     windows = []
     for win in desktop.windows():
         info = _element_info(win, 0)
         if not info.name and not info.class_name:
             continue
-        found = _matches_keywords(info, keywords)
+        found = _matches_keywords(info, window_keywords)
         if all_windows or found:
             windows.append((win, info, found))
     return windows
@@ -248,6 +255,15 @@ def parse_args(argv):
         help="Keyword to search in window/control name, class, automation id.",
     )
     parser.add_argument(
+        "--window-keyword",
+        action="append",
+        dest="window_keywords",
+        help=(
+            "Keyword to select top-level candidate windows. Defaults to "
+            "coupang/POS so command prompts containing --keyword text are ignored."
+        ),
+    )
+    parser.add_argument(
         "--dump-depth",
         type=int,
         default=3,
@@ -267,23 +283,35 @@ def parse_args(argv):
 
 
 def main(argv=None):
+    # 한국 Windows의 cp949 stdout이 일부 유니코드(예: '−' U+2212)를 못 인코딩해
+    # 출력 redirect 시 크래시. UTF-8로 재설정.
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
     args = parse_args(argv or sys.argv[1:])
     _require_windows()
     Desktop, _ = _load_pywinauto()
 
     keywords = args.keywords or DEFAULT_KEYWORDS
+    window_keywords = args.window_keywords or DEFAULT_WINDOW_KEYWORDS
     desktop = Desktop(backend="uia")
 
     print("=" * 72)
     print("  POS UI Automation Inspector")
     print("=" * 72)
-    print(f"Keywords: {', '.join(keywords)}")
+    print(f"Window keywords: {', '.join(window_keywords)}")
+    print(f"Control keywords: {', '.join(keywords)}")
     print(f"Dump depth: {args.dump_depth}")
     print()
 
-    candidates = _window_candidates(desktop, keywords, args.all_windows)
+    candidates = _window_candidates(desktop, window_keywords, args.all_windows)
     if not candidates:
-        print("[RESULT] No top-level windows matched the keywords.")
+        print("[RESULT] No top-level windows matched the window keywords.")
         print("Try:")
         print("  py inspect_pos_ui.py --all-windows --dump-depth 1")
         return 2
