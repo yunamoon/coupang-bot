@@ -437,11 +437,12 @@ class SetupWizard(tk.Toplevel):
         self.after(1000, lambda: self._countdown(n - 1))
 
     def _do_capture(self):
-        # 마우스가 마법사 창 위에 있으면 마법사 UI 일부가 템플릿으로 잘려 들어감.
-        # 캡처 직전에 잠깐 숨기고 화면이 갱신될 시간을 준 뒤 screenshot.
-        self.withdraw()
+        # 마우스가 마법사 창 위에 있을 때 마법사 UI가 템플릿으로 찍히는 걸 방지.
+        # withdraw/deiconify(언맵·재맵)는 시각적으로 거칠어서, 알파만 0으로 떨궈 투명화.
+        # 화면 합성에서 알파=0인 창은 스크린샷에 안 잡힘.
+        self.attributes("-alpha", 0.0)
         self.update_idletasks()
-        time.sleep(0.15)
+        time.sleep(0.1)
         try:
             x, y = pyautogui.position()
             _, key = self.STEPS[self.step_idx]
@@ -452,10 +453,10 @@ class SetupWizard(tk.Toplevel):
             elif key == "accept":
                 bot.capture_accept_at(x, y)
         except Exception as e:
-            self.deiconify()
+            self.attributes("-alpha", 1.0)
             self._show_error(f"캡처 실패: {e}")
             return
-        self.deiconify()
+        self.attributes("-alpha", 1.0)
 
         self.step_idx += 1
         self._busy = False
