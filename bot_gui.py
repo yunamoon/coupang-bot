@@ -498,7 +498,7 @@ class App(tk.Tk):
 
         self.setup_link = tk.Label(
             self, text="POS 화면이 바뀌었나요? 셋업 다시하기",
-            font=(KFONT, FONT_XS, "underline"),
+            font=(KFONT, 10, "underline"),
             fg=TEXT_HINT, bg=CREAM, cursor="hand2",
         )
         self.setup_link.bind("<Button-1>", lambda e: self._open_setup())
@@ -506,7 +506,7 @@ class App(tk.Tk):
 
         tk.Label(
             self, text="종료하려면 창을 닫으세요",
-            font=(KFONT, FONT_XS), fg=TEXT_HINT, bg=CREAM,
+            font=(KFONT, 10), fg=TEXT_HINT, bg=CREAM,
         ).pack(pady=(2, 0))
 
     def _build_mascot(self):
@@ -554,7 +554,7 @@ class App(tk.Tk):
             pass
 
     def _build_stat_card(self):
-        card_w, card_h = 350, 250
+        card_w, card_h = 350, 220
         canvas_w = card_w + 2 * CARD_SHADOW_PAD
         canvas_h = card_h + 2 * CARD_SHADOW_PAD
         self.card_canvas = tk.Canvas(
@@ -581,7 +581,7 @@ class App(tk.Tk):
 
         # 라벨
         self.card_canvas.create_text(
-            x0 + card_w // 2, y0 + 60,
+            x0 + card_w // 2, y0 + 56,
             text="오늘 수락 건수",
             fill=TEXT_SUB, font=(KFONT, FONT_SM),
         )
@@ -600,12 +600,12 @@ class App(tk.Tk):
             fg=TEXT_SUB, bg=CARD_BG,
         ).grid(row=0, column=1, sticky="s", padx=(9, 0), pady=(0, 9))
         self.card_canvas.create_window(
-            x0 + card_w // 2, y0 + 132, window=count_frame,
+            x0 + card_w // 2, y0 + 115, window=count_frame,
         )
 
         # 구분선
         self.card_canvas.create_line(
-            x0 + 30, y0 + 194, x0 + card_w - 30, y0 + 194,
+            x0 + 30, y0 + 165, x0 + card_w - 30, y0 + 165,
             fill=CREAM_DARK, width=1,
         )
 
@@ -636,7 +636,7 @@ class App(tk.Tk):
             self.dots_canvas.itemconfig(d, state="hidden")
 
         self.card_canvas.create_window(
-            x0 + card_w // 2, y0 + 226, window=status_frame,
+            x0 + card_w // 2, y0 + 195, window=status_frame,
         )
 
     def _build_button(self):
