@@ -828,6 +828,15 @@ class App(tk.Tk):
         if self._thread and self._thread.is_alive():
             self._running = False
             self._thread.join(timeout=3.0)
+            if self._thread.is_alive():
+                # 3초 안에 안 끝남 — 새 스레드 시작 거부.
+                # 옛 스레드가 _running 다시 True로 보고 살아나면 두 봇이 동시에
+                # 같은 좌표 클릭하는 최악의 사고가 일어나므로, 절대 새로 시작하지 않음.
+                # _running은 False 유지 → 잔존 스레드는 다음 iteration에 종료됨.
+                self.status_var.set(
+                    "이전 세션 정리 중이에요. 5~10초 뒤 다시 시작해주세요."
+                )
+                return
 
         self._running = True
         self._last_beat = time.time()  # watchdog 시작 전 리셋
