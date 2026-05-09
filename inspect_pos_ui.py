@@ -45,6 +45,9 @@ class ElementInfo:
     rect: object
     enabled: object
     visible: object
+    invoke_supported: object
+    legacy_action: str
+    clickable_methods: str
 
 
 def _require_windows():
@@ -83,6 +86,9 @@ def _element_info(wrapper, depth):
         rect=info.rectangle,
         enabled=_safe_call(wrapper.is_enabled),
         visible=_safe_call(wrapper.is_visible),
+        invoke_supported=_supports_invoke(wrapper),
+        legacy_action=_legacy_default_action(wrapper),
+        clickable_methods=_clickable_methods(wrapper),
     )
 
 
@@ -91,6 +97,58 @@ def _safe_call(fn):
         return fn()
     except Exception as exc:
         return f"<err: {exc}>"
+
+
+def _supports_invoke(wrapper):
+    """Return whether UIA InvokePattern appears usable without moving the mouse."""
+    try:
+        iface = wrapper.iface_invoke
+        return iface is not None
+    except Exception:
+        pass
+
+    try:
+        wrapper.get_invoke_pattern()
+        return True
+    except Exception:
+        return False
+
+
+def _legacy_default_action(wrapper):
+    """Best-effort LegacyIAccessible default action, often 'Press' for buttons."""
+    try:
+        iface = wrapper.iface_legacy_iaccessible
+    except Exception:
+        return ""
+
+    if iface is None:
+        return ""
+
+    candidates = [
+        "CurrentDefaultAction",
+        "DefaultAction",
+        "current_default_action",
+        "default_action",
+    ]
+    for attr in candidates:
+        try:
+            value = getattr(iface, attr)
+            if callable(value):
+                value = value()
+            text = _safe_text(value)
+            if text:
+                return text
+        except Exception:
+            continue
+    return "<legacy present>"
+
+
+def _clickable_methods(wrapper):
+    methods = []
+    for name in ("invoke", "click", "click_input"):
+        if callable(getattr(wrapper, name, None)):
+            methods.append(name)
+    return ",".join(methods)
 
 
 def _line(info: ElementInfo):
@@ -106,6 +164,11 @@ def _line(info: ElementInfo):
     parts.append(f"rect={info.rect}")
     parts.append(f"enabled={info.enabled}")
     parts.append(f"visible={info.visible}")
+    parts.append(f"invoke={info.invoke_supported}")
+    if info.legacy_action:
+        parts.append(f"legacy_action={info.legacy_action!r}")
+    if info.clickable_methods:
+        parts.append(f"methods={info.clickable_methods}")
     return " | ".join(parts)
 
 
@@ -250,8 +313,17 @@ def main(argv=None):
         print(f"... {len(total_matches) - 30} more")
 
     print()
-    if any("조리" in info.name or "시간" in info.name for info in total_matches):
-        print("[NEXT] UI Automation path looks promising. Capture this output.")
+    target_matches = [
+        info for info in total_matches
+        if "조리" in info.name or "시간" in info.name
+    ]
+    invoke_matches = [info for info in target_matches if info.invoke_supported is True]
+    if invoke_matches:
+        print("[NEXT] UIA InvokePattern is available on target-looking controls.")
+        print("       Mouse-free automation may be possible. Capture this output.")
+    elif target_matches:
+        print("[NEXT] Target Korean labels were found, but InvokePattern was not.")
+        print("       click()/click_input() tradeoff or image fallback needs validation.")
     else:
         print("[NEXT] Target Korean labels were not found in UIA names.")
         print("       Image matching fallback may be needed.")
