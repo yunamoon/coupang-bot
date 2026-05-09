@@ -443,6 +443,17 @@ class SetupWizard(tk.Toplevel):
 
 class App(tk.Tk):
     def __init__(self):
+        # Windows: 작업 표시줄에서 Python launcher와 합쳐지지 않게 별도 앱 ID 등록.
+        # tk 윈도우 생성 전에 호출해야 효과 있음.
+        if platform.system() == "Windows":
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    "tani.coupang.bot"
+                )
+            except Exception:
+                pass
+
         super().__init__()
         self.title("쿠팡이츠 · 탄이 봇")
         self.geometry("440x720")
@@ -457,8 +468,27 @@ class App(tk.Tk):
 
         self._dot_idx = 0
 
+        self._set_window_icon()
         self._build_ui()
         self._animate_dots()
+
+    def _set_window_icon(self):
+        """창 타이틀바 + 작업 표시줄 아이콘에 탄이 표시."""
+        try:
+            if platform.system() == "Windows":
+                ico = resource_path("tan.ico")
+                if os.path.exists(ico):
+                    self.iconbitmap(ico)
+            else:
+                # Mac/Linux: PNG/JPEG를 PhotoImage로 변환해 iconphoto에 주입
+                jpg = resource_path("tan.jpeg")
+                if os.path.exists(jpg):
+                    img = Image.open(jpg)
+                    img.thumbnail((128, 128), Image.LANCZOS)
+                    self._refs["window_icon"] = ImageTk.PhotoImage(img)
+                    self.iconphoto(True, self._refs["window_icon"])
+        except Exception:
+            pass
 
     # ─── 빌드 ───
     def _build_ui(self):
@@ -472,12 +502,12 @@ class App(tk.Tk):
             fg=TEXT_HINT, bg=CREAM, cursor="hand2",
         )
         self.setup_link.bind("<Button-1>", lambda e: self._open_setup())
-        self.setup_link.pack(pady=(2, 0))
+        self.setup_link.pack(pady=(0, 0))
 
         tk.Label(
             self, text="종료하려면 창을 닫으세요",
-            font=(KFONT, FONT_SM), fg=TEXT_HINT, bg=CREAM,
-        ).pack(pady=(6, 0))
+            font=(KFONT, FONT_XS), fg=TEXT_HINT, bg=CREAM,
+        ).pack(pady=(2, 0))
 
     def _build_mascot(self):
         self._mascot_size = 120
