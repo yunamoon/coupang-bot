@@ -349,13 +349,14 @@ def validate_setup(popup_xy, plus5_xy, accept_xy):
     pp  = _distance(popup_xy, plus5_xy)
     pa  = _distance(popup_xy, accept_xy)
     p5a = _distance(plus5_xy, accept_xy)
+    max_d = max(pp, pa, p5a)
 
-    # 같은 점 3번 클릭 (단계마다 마우스를 안 옮긴 의심)
-    if pp < 20 and pa < 20:
+    # 세 점이 한 곳에 모여있음 — 단계마다 마우스 안 움직임 의심.
+    # 40px: 카운트다운 동안 손 흔들림(~5px) + 의도적 다른 버튼 거리(>50px) 사이.
+    if max_d < 40:
         warnings.append("세 위치가 거의 같은 점이에요. 단계마다 마우스를 옮겨서 다른 위치를 가리켰는지 확인해주세요.")
-
-    # +5와 수락이 같은 곳
-    if p5a < 15:
+    elif p5a < 25:
+        # 위 케이스 아니면서 +5와 수락만 가까운 경우 (실수로 같은 버튼 두 번 캡처)
         warnings.append("+5 버튼과 수락 버튼이 거의 같은 위치예요. 서로 다른 버튼이 맞는지 확인해주세요.")
 
     # 비현실적 거리 (다른 화면/창의 버튼을 캡처한 의심)
