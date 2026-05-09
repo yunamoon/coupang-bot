@@ -24,7 +24,9 @@ shell.Run "cmd /c py -m pip install -r requirements.txt >> """ & logPath & """ 2
 ' Wait for the bot to exit so we can detect a startup-time crash and surface it.
 exitCode = shell.Run("cmd /c (pythonw bot_gui.py || pyw bot_gui.py) 2>> """ & logPath & """", 0, True)
 If exitCode <> 0 Then
-    MsgBox "탄이 봇이 시작 중 문제가 발생했어요." & vbCrLf & vbCrLf & _
-           "폴더 안의 setup.log 를 사장님께 보내주세요.", _
-           vbExclamation, "탄이 봇"
+    ' Korean strings cause "unterminated string" errors on Korean Windows VBScript
+    ' (UTF-8 file read as cp949). Keep this message ASCII-only.
+    MsgBox "Tani bot failed to start." & vbCrLf & vbCrLf & _
+           "Please send setup.log (in this folder) to the admin.", _
+           vbExclamation, "Tani Bot"
 End If
