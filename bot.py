@@ -99,21 +99,9 @@ def grab():
 
 def click_at(x, y):
     """
-    클릭한 뒤 사용자가 마우스 쓰던 위치로 즉시 복귀.
-    봇이 클릭 좌표에 커서를 죽치게 두면 사용자 작업 흐름을 빼앗으므로,
-    매 클릭 직전에 현재 커서 위치를 캡처해 클릭 직후 그 자리로 워프.
-
-    매번 캡처하는 이유: 사용자가 마우스를 움직이는 중에도 "방금 사용자가 둔 위치"로
-    복귀하기 위함. 시퀀스 시작점에 고정하면 사용자 움직임을 덮어써 버림.
-
     macOS Tahoe에서는 pyautogui의 합성 클릭이 Tkinter 바인딩에 안 닿는 경우가 있어
     osascript(System Events)로 클릭을 보낸다. 다른 OS는 pyautogui 그대로.
     """
-    try:
-        saved = pyautogui.position()
-    except Exception:
-        saved = None
-
     if platform.system() == "Darwin":
         pyautogui.moveTo(x, y)
         subprocess.run(
@@ -123,12 +111,6 @@ def click_at(x, y):
         )
     else:
         pyautogui.click(x, y)
-
-    if saved is not None:
-        try:
-            pyautogui.moveTo(saved[0], saved[1])
-        except Exception:
-            pass
 
 
 # ─── 팝업 감지 ───
