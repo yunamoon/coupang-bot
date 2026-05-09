@@ -327,6 +327,77 @@ def save_offsets_local(popup_xy, plus5_xy, accept_xy):
     return out, offsets
 
 
+# ─── 셋업 검증 (친구 마법사 가드레일) ───
+# 잘못된 캡처(같은 위치 3번 클릭, 배경 캡처, 비현실적 거리)를 잡아 봇 망가짐 방지.
+
+def _distance(p1, p2):
+    return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
+
+
+def _image_detail_score(img_path):
+    """grayscale 표준편차. 단색 배경 ~0, 텍스트/UI 30+."""
+    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return -1
+    return float(img.std())
+
+
+def validate_setup(popup_xy, plus5_xy, accept_xy):
+    """캡처된 좌표·이미지를 검증해 경고 메시지 리스트 반환 (정상이면 [])."""
+    warnings = []
+
+    pp  = _distance(popup_xy, plus5_xy)
+    pa  = _distance(popup_xy, accept_xy)
+    p5a = _distance(plus5_xy, accept_xy)
+
+    # 같은 점 3번 클릭 (단계마다 마우스를 안 옮긴 의심)
+    if pp < 20 and pa < 20:
+        warnings.append("세 위치가 거의 같은 점이에요. 단계마다 마우스를 옮겨서 다른 위치를 가리켰는지 확인해주세요.")
+
+    # +5와 수락이 같은 곳
+    if p5a < 15:
+        warnings.append("+5 버튼과 수락 버튼이 거의 같은 위치예요. 서로 다른 버튼이 맞는지 확인해주세요.")
+
+    # 비현실적 거리 (다른 화면/창의 버튼을 캡처한 의심)
+    if pp > 600:
+        warnings.append(
+            f"+5 버튼이 팝업에서 너무 멀어요 ({int(pp)}px). 같은 팝업 안의 버튼인지 확인해주세요."
+        )
+    if pa > 600:
+        warnings.append(
+            f"수락 버튼이 팝업에서 너무 멀어요 ({int(pa)}px). 같은 팝업 안의 버튼인지 확인해주세요."
+        )
+
+    # 이미지가 단조로움 (배경 캡처 의심)
+    popup_local = _local_path(POPUP_IMG)
+    if os.path.exists(popup_local):
+        s = _image_detail_score(popup_local)
+        if 0 <= s < 12:
+            warnings.append(
+                "팝업 캡처가 단조로워요. \"새 주문이 들어왔어요\" 텍스트 위에 정확히 마우스를 올렸는지 확인해주세요."
+            )
+
+    accept_local = _local_path(ACCEPT_IMG)
+    if os.path.exists(accept_local):
+        s = _image_detail_score(accept_local)
+        if 0 <= s < 12:
+            warnings.append(
+                "수락 버튼 캡처가 단조로워요. \"수락\" 버튼 위에 정확히 마우스를 올렸는지 확인해주세요."
+            )
+
+    return warnings
+
+
+def cleanup_local_setup():
+    """_local 파일 모두 삭제 — 잘못된 셋업 초기화용."""
+    for p in (_local_path(POPUP_IMG), _local_path(ACCEPT_IMG), _local_path(CONFIG_FILE)):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
+
+
 # ─── 자동 수락 ───
 
 def try_accept(offsets):

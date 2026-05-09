@@ -44,6 +44,19 @@ CLICK_DELAY  = bot.CLICK_DELAY
 POST_ACCEPT  = bot.POST_ACCEPT_DELAY
 SCAN_INTERVAL = bot.SCAN_INTERVAL
 
+# 클릭 실패 감지 — 같은 팝업이 사라지지 않는 패턴이 N번 연속이면 알림.
+# 단, 최근 SUCCESS_GRACE_SEC 안에 수락 성공이 있으면 보류 (피크타임 백투백 주문
+# 으로 폴링이 잠깐 사라짐 순간을 못 잡은 false-positive 방지).
+CLICK_FAILURE_THRESHOLD = 3
+SUCCESS_GRACE_SEC = 30
+FAILURE_COOLDOWN_SEC = 60
+
+# Watchdog — 메인 루프가 무성 데드락/예외로 멈춰도 GUI는 정상 표시되는 사고 방지.
+# 봇 루프가 매 반복마다 beat을 찍고, 메인 스레드가 주기적으로 stale 여부 검사.
+# Threshold는 정상 흐름 worst case(쿨다운 60s) 보다 충분히 크게 설정해야 false alert 안 남.
+WATCHDOG_STALE_SEC = 90
+WATCHDOG_CHECK_INTERVAL_MS = 5000
+
 
 # ─── 컬러 팔레트 ───
 CORAL       = "#FF7A59"
@@ -66,7 +79,7 @@ ERR_TEXT    = "#D86464"
 
 # ─── 봇 로직 ───
 
-def bot_loop(running_flag, status_cb, count_cb, on_exit):
+def bot_loop(running_flag, status_cb, count_cb, on_exit, beat):
     try:
         with open(bot.config_file_path()) as f:
             offsets = json.load(f)
@@ -76,9 +89,12 @@ def bot_loop(running_flag, status_cb, count_cb, on_exit):
         return
 
     in_error = False
+    consecutive_failures = 0
+    last_success_time = time.time()
     status_cb(("waiting", "탄이가 주문 찾는 중!"))
 
     while running_flag():
+        beat()  # watchdog 하트비트
         try:
             screen = bot.grab()
             popup = bot.find_popup(screen)  # 논리좌표로 반환됨 (Retina 변환 포함)
@@ -123,14 +139,42 @@ def bot_loop(running_flag, status_cb, count_cb, on_exit):
                         break
 
                 if disappeared:
+                    consecutive_failures = 0
+                    last_success_time = time.time()
                     count_cb()
                     status_cb(("running", "수락 완료! 잘했어요 탄이!"))
                     time.sleep(POST_ACCEPT)
                     status_cb(("waiting", "탄이가 주문 찾는 중!"))
                 else:
-                    # 2초간 팝업 공백을 못 잡음 — 다음 루프가 처리.
-                    # (진짜 클릭 실패면 같은 팝업 재시도, 너무 빠른 연속 주문이면 새 팝업 정상 처리)
-                    status_cb(("running", "다음 주문 확인 중..."))
+                    # 2초간 팝업 공백을 못 잡음. 두 가지 가능성:
+                    #   (a) 너무 빠른 연속 주문 — 다음 루프가 새 팝업으로 정상 처리
+                    #   (b) 진짜 클릭 실패 — POS 미반응/포커스 분실/Accessibility 막힘
+                    # (a)/(b) 구분: grace window 내 성공이 있었는지로 판별.
+                    consecutive_failures += 1
+                    no_recent_success = (
+                        time.time() - last_success_time > SUCCESS_GRACE_SEC
+                    )
+                    if (consecutive_failures >= CLICK_FAILURE_THRESHOLD
+                            and no_recent_success):
+                        err_msg = (
+                            f"클릭이 POS에 전달되지 않는 것 같아요 "
+                            f"({consecutive_failures}회 연속, "
+                            f"최근 {SUCCESS_GRACE_SEC}초간 성공 0건). "
+                            f"POS 포커스/권한 확인 부탁드려요."
+                        )
+                        status_cb(("error", err_msg))
+                        _tracker.record(err_msg)
+                        # 다음 임계치까지 다시 누적하도록 카운터 리셋.
+                        consecutive_failures = 0
+                        # 일시적 문제(POS 포커스 잃음 등) 회복할 시간을 줌.
+                        # 사용자 stop 누르면 즉시 빠지게 1초 단위로 잘게 sleep.
+                        for _ in range(FAILURE_COOLDOWN_SEC):
+                            if not running_flag():
+                                break
+                            beat()  # 쿨다운 중에도 watchdog 만족시킴
+                            time.sleep(1)
+                    else:
+                        status_cb(("running", "다음 주문 확인 중..."))
 
             # 정상 iteration이 끝났다면 직전 에러 상태에서 자동 복구.
             # (이걸 안 하면 일시 에러 한 번에 GUI가 영영 빨간 "오류" 배지로 굳어
@@ -421,6 +465,41 @@ class SetupWizard(tk.Toplevel):
             self._render_step()
 
     def _finish(self):
+        # 저장 전에 검증 — 잘못된 캡처면 사용자에게 다시 시도 기회 제공.
+        warnings = bot.validate_setup(
+            self.captures["popup"],
+            self.captures["plus5"],
+            self.captures["accept"],
+        )
+        if warnings:
+            self._handle_warnings(warnings)
+            return
+        self._save_and_done()
+
+    def _handle_warnings(self, warnings):
+        from tkinter import messagebox
+        msg = (
+            "셋업 검증에서 다음 문제가 발견됐어요:\n\n"
+            + "\n\n".join(f"• {w}" for w in warnings)
+            + "\n\n"
+            "다시 셋업하시겠어요?\n"
+            "(\"아니오\" 누르면 그대로 저장 — 봇이 잘못 동작할 수 있음)"
+        )
+        do_redo = messagebox.askyesno("셋업 확인 필요", msg, parent=self)
+        if do_redo:
+            self._restart_wizard()
+        else:
+            self._save_and_done()
+
+    def _restart_wizard(self):
+        # _local 이미지/오프셋 다 정리하고 처음부터 다시.
+        bot.cleanup_local_setup()
+        self.step_idx = 0
+        self.captures = {}
+        self._busy = False
+        self._render_step()
+
+    def _save_and_done(self):
         try:
             bot.save_offsets_local(
                 self.captures["popup"],
@@ -465,6 +544,7 @@ class App(tk.Tk):
         self._thread = None
         self._count = 0
         self._refs = {}                     # PhotoImage 참조 유지
+        self._last_beat = time.time()       # watchdog 안전 초기화
 
         self._dot_idx = 0
 
@@ -684,6 +764,7 @@ class App(tk.Tk):
             self._thread.join(timeout=3.0)
 
         self._running = True
+        self._last_beat = time.time()  # watchdog 시작 전 리셋
         self.btn.set_state(MINT_LIGHT, MINT_DARK, text="자동 수락 중지")
         self._set_mascot_ring(MINT_DARK)
         self._set_badge("running", "실행 중")
@@ -694,10 +775,35 @@ class App(tk.Tk):
                 self._set_status,
                 self._increment_count,
                 self._on_bot_exit,
+                self._beat,
             ),
             daemon=True,
         )
         self._thread.start()
+        self._schedule_watchdog()
+
+    # ─── Watchdog ───
+    def _beat(self):
+        # bot_loop이 매 반복마다 호출. 단순 atomic write — lock 불필요.
+        self._last_beat = time.time()
+
+    def _schedule_watchdog(self):
+        if not self._running:
+            return
+        self.after(WATCHDOG_CHECK_INTERVAL_MS, self._watchdog_check)
+
+    def _watchdog_check(self):
+        if not self._running:
+            return
+        elapsed = time.time() - self._last_beat
+        if elapsed > WATCHDOG_STALE_SEC:
+            msg = (
+                f"봇 루프 응답 없음 — {int(elapsed)}초간 멈춤 감지. "
+                f"창을 끄고 다시 시작해주세요."
+            )
+            self._apply_status("error", msg)
+            _tracker.record(msg)
+        self._schedule_watchdog()
 
     def _stop(self):
         self._running = False
