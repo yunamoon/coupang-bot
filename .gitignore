@@ -11,3 +11,6 @@ alert_config.json
 templates/*_local.png
 templates/*_local.json
 setup.log
+
+# 로컬 전용 — 진단 결과/메모 등 공개 안 할 문서
+pos_uia_diagnostic_findings.md
