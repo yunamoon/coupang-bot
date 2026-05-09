@@ -36,7 +36,7 @@ FONT_XS = 11
 FONT_SM = 13
 FONT_MD = 15
 FONT_LG = 18
-FONT_COUNT = 54
+FONT_COUNT = 44
 
 # 봇 동작 파라미터는 bot 모듈 값을 사용
 PLUS5_REPEAT = bot.PLUS5_REPEAT
@@ -587,18 +587,24 @@ class App(tk.Tk):
         )
 
         # 숫자 + "건" — grid의 sticky="s"로 baseline 정렬
-        count_frame = tk.Frame(self.card_canvas, bg=CARD_BG)
+        # highlightthickness=0: 기본 1px 포커스 테두리가 카드 위에서 흰 박스로 보이는 문제 방지
+        count_frame = tk.Frame(
+            self.card_canvas, bg=CARD_BG,
+            highlightthickness=0, bd=0,
+        )
         self.count_var = tk.StringVar(value="0")
         tk.Label(
             count_frame, textvariable=self.count_var,
             font=(KFONT, FONT_COUNT, "bold"),
             fg=TEXT_MAIN, bg=CARD_BG,
+            highlightthickness=0, bd=0,
         ).grid(row=0, column=0, sticky="s")
         tk.Label(
             count_frame, text="건",
             font=(KFONT, FONT_MD),
             fg=TEXT_SUB, bg=CARD_BG,
-        ).grid(row=0, column=1, sticky="s", padx=(9, 0), pady=(0, 9))
+            highlightthickness=0, bd=0,
+        ).grid(row=0, column=1, sticky="s", padx=(9, 0), pady=(0, 7))
         self.card_canvas.create_window(
             x0 + card_w // 2, y0 + 115, window=count_frame,
         )
