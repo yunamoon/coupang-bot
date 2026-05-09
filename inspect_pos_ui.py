@@ -1,13 +1,13 @@
 """
 Windows POS UI Automation inspector.
 
-Run this on the friend's Windows POS machine before implementing the cooking
-delay feature. It checks whether the Coupang Eats POS window and target buttons
+Run this on the friend's Windows POS machine before implementing the prep-delay
+feature. It checks whether the Coupang Eats POS window and target buttons
 are visible through UI Automation.
 
 Usage:
   py inspect_pos_ui.py
-  py inspect_pos_ui.py --keyword "조리 지연" --keyword "시간 추가"
+  py inspect_pos_ui.py --keyword "준비 지연" --keyword "시간 추가"
   py inspect_pos_ui.py --dump-depth 4 --all-windows
 
 This script is intentionally standalone and does not affect the running bot.
@@ -27,8 +27,10 @@ DEFAULT_KEYWORDS = [
     "쿠팡",
     "Coupang",
     "POS",
-    "조리",
-    "조리 지연",
+    "준비",
+    "준비 지연",
+    "준비지연",
+    "조리",      # 실제 버튼명은 "준비지연"이지만 변형 가능성 대비 같이 검색
     "시간",
     "시간 추가",
     "추가",
@@ -315,7 +317,7 @@ def main(argv=None):
     print()
     target_matches = [
         info for info in total_matches
-        if "조리" in info.name or "시간" in info.name
+        if "준비" in info.name or "조리" in info.name or "시간" in info.name
     ]
     invoke_matches = [info for info in target_matches if info.invoke_supported is True]
     if invoke_matches:
